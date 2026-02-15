@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ClipForge</title>
+  <link rel="stylesheet" href="{{ url_for('web.static', filename='style.css') }}">
+</head>
+<body>
+  <div class="container">
+    <h1>ClipForge</h1>
+    <p class="subtitle">Local video editing &mdash; silence cutting &amp; auto-captions</p>
+
+    <!-- Step 1: Upload -->
+    <section id="step-upload" class="step active">
+      <h2>1. Upload Video</h2>
+      <div id="drop-zone" class="drop-zone">
+        <p>Drag &amp; drop a video file here, or click to browse</p>
+        <input type="file" id="file-input" accept="video/*" hidden>
+      </div>
+      <div id="upload-status" class="status" hidden></div>
+    </section>
+
+    <!-- Step 2: Configure -->
+    <section id="step-config" class="step" hidden>
+      <h2>2. Configure</h2>
+      <div class="file-info" id="file-info"></div>
+
+      <fieldset>
+        <legend>
+          <label><input type="checkbox" id="silence-enabled" checked> Cut Silence</label>
+        </legend>
+        <div class="field">
+          <label for="threshold">Threshold (dB)</label>
+          <input type="range" id="threshold" min="-60" max="-10" value="-30" step="1">
+          <span id="threshold-val">-30</span>
+        </div>
+        <div class="field">
+          <label for="min-duration">Min Duration (s)</label>
+          <input type="range" id="min-duration" min="0.1" max="3.0" value="0.5" step="0.1">
+          <span id="min-duration-val">0.5</span>
+        </div>
+        <div class="field">
+          <label for="padding">Padding (s)</label>
+          <input type="range" id="padding" min="0.0" max="0.5" value="0.05" step="0.01">
+          <span id="padding-val">0.05</span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>
+          <label><input type="checkbox" id="captions-enabled"> Auto-Captions</label>
+        </legend>
+        <div class="field">
+          <label for="whisper-model">Whisper Model</label>
+          <select id="whisper-model">
+            <option value="tiny">tiny</option>
+            <option value="base" selected>base</option>
+            <option value="small">small</option>
+            <option value="medium">medium</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="caption-format">Format</label>
+          <select id="caption-format">
+            <option value="srt" selected>SRT</option>
+            <option value="vtt">VTT</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <button id="btn-process" class="btn-primary">Process Video</button>
+    </section>
+
+    <!-- Step 3: Progress -->
+    <section id="step-progress" class="step" hidden>
+      <h2>3. Processing</h2>
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+      <p id="progress-stage" class="stage-label">Starting...</p>
+    </section>
+
+    <!-- Step 4: Result -->
+    <section id="step-result" class="step" hidden>
+      <h2>4. Result</h2>
+      <div id="result-info" class="result-info"></div>
+      <video id="result-video" controls class="result-video"></video>
+      <div class="actions">
+        <a id="btn-download" class="btn-primary" download>Download</a>
+        <button id="btn-restart" class="btn-secondary">Process Another</button>
+      </div>
+    </section>
+
+    <!-- Error -->
+    <section id="step-error" class="step" hidden>
+      <h2>Error</h2>
+      <p id="error-message" class="error"></p>
+      <button id="btn-retry" class="btn-secondary">Try Again</button>
+    </section>
+  </div>
+
+  <script src="{{ url_for('web.static', filename='app.js') }}"></script>
+</body>
+</html>

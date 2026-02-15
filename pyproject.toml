@@ -11,7 +11,8 @@ dependencies = []
 
 [project.optional-dependencies]
 captions = ["openai-whisper"]
-dev = ["pytest"]
+web = ["flask>=3.0"]
+dev = ["pytest", "flask>=3.0"]
 
 [project.scripts]
 clipforge = "clipforge.cli:main"
