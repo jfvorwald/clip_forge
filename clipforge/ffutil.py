@@ -4,13 +4,17 @@ import json
 import re
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
 from clipforge.models import ProbeResult, TimeRange
 
 
 class FFmpegNotFoundError(RuntimeError):
+    pass
+
+
+class NoAudioStreamError(ValueError):
+    """Raised when the input file has no audio stream."""
     pass
 
 
@@ -34,8 +38,19 @@ def probe(input_path: Path) -> ProbeResult:
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     data = json.loads(result.stdout)
 
-    video_stream = next(s for s in data["streams"] if s["codec_type"] == "video")
-    audio_stream = next(s for s in data["streams"] if s["codec_type"] == "audio")
+    video_stream = next(
+        (s for s in data["streams"] if s["codec_type"] == "video"), None
+    )
+    audio_stream = next(
+        (s for s in data["streams"] if s["codec_type"] == "audio"), None
+    )
+
+    if video_stream is None:
+        raise ValueError(f"No video stream found in {input_path}")
+    if audio_stream is None:
+        raise NoAudioStreamError(
+            f"No audio stream found in {input_path}; silence detection requires audio"
+        )
 
     # Parse fps from r_frame_rate (e.g. "30/1")
     num, den = video_stream["r_frame_rate"].split("/")
@@ -52,10 +67,38 @@ def probe(input_path: Path) -> ProbeResult:
     )
 
 
+def parse_silence_ranges(stderr: str, duration: float | None = None) -> list[TimeRange]:
+    """Parse silencedetect output from ffmpeg stderr into TimeRanges.
+
+    If a silence_start has no matching silence_end (silence extends to EOF),
+    ``duration`` is used as the end time. If ``duration`` is also None the
+    unpaired start is dropped.
+    """
+    starts = [float(m) for m in re.findall(r"silence_start: ([\d.]+)", stderr)]
+    ends = [float(m) for m in re.findall(r"silence_end: ([\d.]+)", stderr)]
+
+    ranges: list[TimeRange] = []
+    for i, start in enumerate(starts):
+        if i < len(ends):
+            ranges.append(TimeRange(start=start, end=ends[i]))
+        elif duration is not None:
+            # Unpaired silence_start — silence extends to EOF
+            ranges.append(TimeRange(start=start, end=duration))
+    return ranges
+
+
 def detect_silence(
-    input_path: Path, threshold_db: float, min_duration: float
+    input_path: Path,
+    threshold_db: float,
+    min_duration: float,
+    duration: float | None = None,
 ) -> list[TimeRange]:
-    """Run FFmpeg silencedetect and return silent time ranges."""
+    """Run FFmpeg silencedetect and return silent time ranges.
+
+    *duration* is used to cap trailing silence that extends to EOF (an unpaired
+    ``silence_start`` with no matching ``silence_end``).  When not supplied, any
+    unpaired trailing silence is dropped.
+    """
     cmd = [
         "ffmpeg",
         "-i", str(input_path),
@@ -63,16 +106,13 @@ def detect_silence(
         "-f", "null", "-",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    stderr = result.stderr
 
-    starts = [float(m) for m in re.findall(r"silence_start: ([\d.]+)", stderr)]
-    ends = [float(m) for m in re.findall(r"silence_end: ([\d.]+)", stderr)]
+    if result.returncode != 0 and not result.stderr:
+        raise RuntimeError(
+            f"ffmpeg silencedetect failed (rc={result.returncode}) with no output"
+        )
 
-    # Pair them up; if a silence extends to EOF there may be one extra start
-    ranges = []
-    for i in range(min(len(starts), len(ends))):
-        ranges.append(TimeRange(start=starts[i], end=ends[i]))
-    return ranges
+    return parse_silence_ranges(result.stderr, duration=duration)
 
 
 def extract_audio(
@@ -95,41 +135,41 @@ def extract_audio(
 def concat_segments(
     input_path: Path, segments: list[TimeRange], output_path: Path
 ) -> None:
-    """Concatenate keep-segments from input into output using the concat demuxer."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
-        part_paths: list[Path] = []
+    """Concatenate keep-segments using a single ffmpeg filter_complex call.
 
-        # Cut each segment into a separate file
-        for i, seg in enumerate(segments):
-            part = tmpdir / f"part{i:04d}.ts"
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", str(input_path),
-                "-ss", str(seg.start),
-                "-to", str(seg.end),
-                "-c", "copy",
-                str(part),
-            ]
-            subprocess.run(cmd, capture_output=True, check=True)
-            part_paths.append(part)
+    Uses trim/atrim + concat filters so no intermediate files are needed and
+    the approach works regardless of the input codec/container.
+    """
+    if not segments:
+        raise ValueError("concat_segments called with empty segment list")
 
-        # Write concat list
-        concat_file = tmpdir / "concat.txt"
-        concat_file.write_text(
-            "\n".join(f"file '{p}'" for p in part_paths)
+    n = len(segments)
+    filter_parts: list[str] = []
+    stream_labels: list[str] = []
+
+    for i, seg in enumerate(segments):
+        filter_parts.append(
+            f"[0:v]trim=start={seg.start}:end={seg.end},setpts=PTS-STARTPTS[v{i}]"
         )
+        filter_parts.append(
+            f"[0:a]atrim=start={seg.start}:end={seg.end},asetpts=PTS-STARTPTS[a{i}]"
+        )
+        stream_labels.append(f"[v{i}][a{i}]")
 
-        # Concat
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", str(concat_file),
-            "-c", "copy",
-            str(output_path),
-        ]
-        subprocess.run(cmd, capture_output=True, check=True)
+    concat_input = "".join(stream_labels)
+    filter_parts.append(f"{concat_input}concat=n={n}:v=1:a=1[outv][outa]")
+
+    filter_complex = ";\n".join(filter_parts)
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(input_path),
+        "-filter_complex", filter_complex,
+        "-map", "[outv]",
+        "-map", "[outa]",
+        str(output_path),
+    ]
+    subprocess.run(cmd, capture_output=True, check=True)
 
 
 def burn_captions(
