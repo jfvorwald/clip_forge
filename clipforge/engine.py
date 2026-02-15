@@ -38,42 +38,64 @@ def process(
         if on_progress:
             on_progress(stage, frac)
 
+    def _sub_progress(stage: str, base: float, span: float):
+        """Return a callback that maps ffmpeg's [0,1] to [base, base+span]."""
+        def cb(frac: float) -> None:
+            _progress(stage, base + frac * span)
+        return cb
+
     ffutil.check_ffmpeg()
 
-    _progress("probe", 0.0)
+    _progress("Probing video metadata", 0.0)
     probe_result = ffutil.probe(manifest.input)
     duration_original = probe_result.duration
+    _progress("Probing video metadata", 0.05)
 
     current_input = manifest.input
     segments_removed = 0
 
     # --- Silence cutting ---
     if manifest.silence_cut.enabled:
-        _progress("silence_detect", 0.1)
-        segments = analyze_silence(current_input, manifest.silence_cut)
+        _progress("Scanning audio for silence", 0.06)
+        segments = analyze_silence(
+            current_input,
+            manifest.silence_cut,
+            on_progress=_sub_progress("Scanning audio for silence", 0.06, 0.19),
+        )
+        _progress("Analyzing segments", 0.25)
 
         segments_removed = sum(1 for s in segments if s.label == "silence")
 
         if segments_removed > 0:
-            _progress("silence_cut", 0.3)
+            _progress(f"Encoding — cutting {segments_removed} silent segments", 0.27)
             cut_output = manifest.output.with_stem(manifest.output.stem + "_cut")
-            apply_cuts(current_input, segments, cut_output)
+            apply_cuts(
+                current_input,
+                segments,
+                cut_output,
+                on_progress=_sub_progress(
+                    f"Encoding — cutting {segments_removed} silent segments", 0.27, 0.53
+                ),
+            )
             current_input = cut_output
+            _progress("Silence removal complete", 0.80)
+        else:
+            _progress("No silence found", 0.80)
 
     # --- Captions ---
     caption_path = None
     transcript_segments: list[Segment] = []
     if manifest.captions.enabled:
-        _progress("transcribe", 0.5)
+        _progress("Transcribing audio", 0.50)
         transcript_segments = transcribe(current_input, manifest.captions)
 
-        _progress("captions", 0.8)
+        _progress("Generating captions", 0.80)
         caption_path = apply_captions(
             current_input, transcript_segments, manifest.output, manifest.captions
         )
 
     # --- Finalize output ---
-    _progress("finalize", 0.9)
+    _progress("Finalizing output", 0.85)
     if current_input != manifest.output:
         # If silence cut produced an intermediate file, rename it to final output
         if current_input != manifest.input:
@@ -84,9 +106,10 @@ def process(
             shutil.copy2(manifest.input, manifest.output)
 
     # Probe final duration
+    _progress("Verifying result", 0.92)
     final_probe = ffutil.probe(manifest.output)
 
-    _progress("done", 1.0)
+    _progress("Done", 1.0)
     return EngineResult(
         output_path=manifest.output,
         caption_path=caption_path,

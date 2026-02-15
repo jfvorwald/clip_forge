@@ -5,8 +5,11 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 from clipforge.models import ProbeResult, TimeRange
+
+ProgressCallback = Callable[[float], None] | None
 
 
 class FFmpegNotFoundError(RuntimeError):
@@ -23,6 +26,65 @@ def check_ffmpeg() -> None:
     for cmd in ("ffmpeg", "ffprobe"):
         if shutil.which(cmd) is None:
             raise FFmpegNotFoundError(f"{cmd} not found on PATH")
+
+
+def _run_ffmpeg_with_progress(
+    cmd: list[str],
+    total_duration: float | None = None,
+    on_progress: ProgressCallback = None,
+) -> str:
+    """Run an ffmpeg command, streaming stderr for progress updates.
+
+    Parses ``time=HH:MM:SS.ss`` from ffmpeg's stderr output and calls
+    *on_progress(fraction)* where fraction is in [0, 1].
+
+    Returns the full stderr as a string (needed for silence parsing etc.).
+    """
+    if on_progress is None or total_duration is None or total_duration <= 0:
+        # Fast path: no progress needed, use simple subprocess.run
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode, cmd, result.stdout, result.stderr
+            )
+        return result.stderr
+
+    time_re = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
+    stderr_parts: list[str] = []
+
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+
+    # Read stderr character by character to handle \r-delimited progress lines
+    line_buf = ""
+    assert proc.stderr is not None
+    for char in iter(lambda: proc.stderr.read(1), ""):
+        if char in ("\n", "\r"):
+            if line_buf.strip():
+                stderr_parts.append(line_buf)
+                m = time_re.search(line_buf)
+                if m:
+                    h, mins, s, frac = m.groups()
+                    current = int(h) * 3600 + int(mins) * 60 + int(s) + int(frac) / (10 ** len(frac))
+                    progress = min(current / total_duration, 0.99)
+                    on_progress(progress)
+            line_buf = ""
+        else:
+            line_buf += char
+
+    if line_buf.strip():
+        stderr_parts.append(line_buf)
+
+    proc.wait()
+    full_stderr = "\n".join(stderr_parts)
+
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+            proc.returncode, cmd, "", full_stderr
+        )
+
+    return full_stderr
 
 
 def probe(input_path: Path) -> ProbeResult:
@@ -92,6 +154,7 @@ def detect_silence(
     threshold_db: float,
     min_duration: float,
     duration: float | None = None,
+    on_progress: ProgressCallback = None,
 ) -> list[TimeRange]:
     """Run FFmpeg silencedetect and return silent time ranges.
 
@@ -105,14 +168,17 @@ def detect_silence(
         "-af", f"silencedetect=noise={threshold_db}dB:d={min_duration}",
         "-f", "null", "-",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
 
-    if result.returncode != 0 and not result.stderr:
-        raise RuntimeError(
-            f"ffmpeg silencedetect failed (rc={result.returncode}) with no output"
-        )
+    try:
+        stderr = _run_ffmpeg_with_progress(cmd, total_duration=duration, on_progress=on_progress)
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr or ""
+        if not stderr:
+            raise RuntimeError(
+                f"ffmpeg silencedetect failed (rc={e.returncode}) with no output"
+            )
 
-    return parse_silence_ranges(result.stderr, duration=duration)
+    return parse_silence_ranges(stderr, duration=duration)
 
 
 def extract_audio(
@@ -133,7 +199,10 @@ def extract_audio(
 
 
 def concat_segments(
-    input_path: Path, segments: list[TimeRange], output_path: Path
+    input_path: Path,
+    segments: list[TimeRange],
+    output_path: Path,
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Concatenate keep-segments using a single ffmpeg filter_complex call.
 
@@ -146,6 +215,8 @@ def concat_segments(
     n = len(segments)
     filter_parts: list[str] = []
     stream_labels: list[str] = []
+
+    total_duration = sum(seg.end - seg.start for seg in segments)
 
     for i, seg in enumerate(segments):
         filter_parts.append(
@@ -169,7 +240,7 @@ def concat_segments(
         "-map", "[outa]",
         str(output_path),
     ]
-    subprocess.run(cmd, capture_output=True, check=True)
+    _run_ffmpeg_with_progress(cmd, total_duration=total_duration, on_progress=on_progress)
 
 
 def burn_captions(

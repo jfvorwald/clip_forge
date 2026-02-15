@@ -1,13 +1,18 @@
 """Silence detection analyzer."""
 
 from pathlib import Path
+from typing import Callable
 
 from clipforge import ffutil
 from clipforge.manifest import SilenceCutConfig
 from clipforge.models import Segment
 
 
-def analyze_silence(input_path: Path, config: SilenceCutConfig) -> list[Segment]:
+def analyze_silence(
+    input_path: Path,
+    config: SilenceCutConfig,
+    on_progress: Callable[[float], None] | None = None,
+) -> list[Segment]:
     """Detect silence and return labeled keep/silence segments.
 
     Returns segments covering the full duration, each labeled "keep" or "silence".
@@ -21,6 +26,7 @@ def analyze_silence(input_path: Path, config: SilenceCutConfig) -> list[Segment]
         threshold_db=config.threshold_db,
         min_duration=config.min_duration,
         duration=duration,
+        on_progress=on_progress,
     )
 
     # No silence detected — the entire file is one keep segment
