@@ -26,11 +26,22 @@ def main() -> None:
     proc.add_argument("--caption-model", type=str, default="base", help="Whisper model size")
     proc.add_argument("--caption-format", choices=["srt", "vtt"], default="srt", help="Caption output format")
 
+    serve = sub.add_parser("serve", help="Launch the web UI")
+    serve.add_argument("--port", type=int, default=8321, help="Port to listen on")
+    serve.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
+
     args = parser.parse_args()
 
     if args.command is None:
         parser.print_help()
         sys.exit(0)
+
+    if args.command == "serve":
+        from clipforge.web import create_app
+        app = create_app()
+        print(f"ClipForge web UI: http://{args.host}:{args.port}")
+        app.run(host=args.host, port=args.port, debug=False)
+        return
 
     if args.manifest:
         m = load_manifest(args.manifest)
