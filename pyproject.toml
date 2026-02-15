@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "clipforge"
+version = "0.1.0"
+description = "Local YouTube video editing tool — auto-cut silences and auto-generate captions"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+captions = ["openai-whisper"]
+dev = ["pytest"]
+
+[project.scripts]
+clipforge = "clipforge.cli:main"

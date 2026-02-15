@@ -1,0 +1,18 @@
+{
+  "version": "1",
+  "input": "video.mp4",
+  "output": "video_edited.mp4",
+  "silence_cut": {
+    "enabled": true,
+    "min_duration": 0.5,
+    "threshold_db": -30,
+    "padding": 0.05
+  },
+  "captions": {
+    "enabled": true,
+    "model": "base",
+    "language": null,
+    "output_format": "srt",
+    "word_level": false
+  }
+}
