@@ -1,6 +1,8 @@
 /* ClipForge Web UI */
 
 let currentJobId = null;
+let processStartTime = null;
+let elapsedTimer = null;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -9,11 +11,22 @@ const $ = (sel) => document.querySelector(sel);
 function showStep(id) {
   document.querySelectorAll(".step").forEach((s) => (s.hidden = true));
   $(`#step-${id}`).hidden = false;
+  if (id !== "progress" && elapsedTimer) {
+    clearInterval(elapsedTimer);
+    elapsedTimer = null;
+  }
 }
 
 function showError(msg) {
   $("#error-message").textContent = msg;
   showStep("error");
+}
+
+function formatElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${s % 60}s`;
 }
 
 // --- Slider live values ---
@@ -34,6 +47,10 @@ bindSlider("#padding", "#padding-val");
 const dropZone = $("#drop-zone");
 const fileInput = $("#file-input");
 
+// Prevent browser from navigating to dropped files
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => e.preventDefault());
+
 dropZone.addEventListener("click", () => fileInput.click());
 dropZone.addEventListener("dragover", (e) => {
   e.preventDefault();
@@ -44,6 +61,7 @@ dropZone.addEventListener("dragleave", () =>
 );
 dropZone.addEventListener("drop", (e) => {
   e.preventDefault();
+  e.stopPropagation();
   dropZone.classList.remove("drag-over");
   if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
 });
@@ -62,8 +80,9 @@ async function uploadFile(file) {
   try {
     const resp = await fetch("/api/upload", { method: "POST", body: form });
     if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(err.error || "Upload failed");
+      let msg = "Upload failed";
+      try { msg = (await resp.json()).error || msg; } catch {}
+      throw new Error(msg);
     }
     const data = await resp.json();
     currentJobId = data.job_id;
@@ -96,6 +115,15 @@ async function startProcessing() {
   showStep("progress");
   $("#progress-bar").style.width = "0%";
   $("#progress-stage").textContent = "Starting...";
+  $("#progress-pct").textContent = "0%";
+  $("#progress-elapsed").textContent = "";
+
+  // Start elapsed timer
+  processStartTime = Date.now();
+  elapsedTimer = setInterval(() => {
+    const elapsed = Date.now() - processStartTime;
+    $("#progress-elapsed").textContent = `Elapsed: ${formatElapsed(elapsed)}`;
+  }, 1000);
 
   try {
     const resp = await fetch(`/api/jobs/${currentJobId}/process`, {
@@ -129,11 +157,24 @@ function listenProgress() {
 
     const pct = Math.round((data.progress || 0) * 100);
     $("#progress-bar").style.width = pct + "%";
-    $("#progress-stage").textContent = data.stage || "";
+    $("#progress-pct").textContent = pct + "%";
+
+    // Show human-readable stage name
+    if (data.stage && data.stage !== "complete") {
+      $("#progress-stage").textContent = data.stage;
+    }
 
     if (data.stage === "complete") {
       source.close();
-      showResult(data.result);
+      if (elapsedTimer) {
+        clearInterval(elapsedTimer);
+        elapsedTimer = null;
+      }
+      const elapsed = Date.now() - processStartTime;
+      $("#progress-stage").textContent = `Done in ${formatElapsed(elapsed)}`;
+      $("#progress-pct").textContent = "100%";
+      // Brief pause to show completion before switching
+      setTimeout(() => showResult(data.result), 600);
     }
   };
 

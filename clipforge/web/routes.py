@@ -2,6 +2,7 @@
 
 import json
 import queue
+import subprocess
 import threading
 import uuid
 from pathlib import Path
@@ -107,6 +108,10 @@ def start_process(job_id: str):
                 "segments_removed": result.segments_removed,
             }
             job["status"] = "done"
+        except subprocess.CalledProcessError as e:
+            job["status"] = "error"
+            stderr = e.stderr if isinstance(e.stderr, str) else (e.stderr or b"").decode(errors="replace")
+            job["error"] = f"ffmpeg failed: {stderr[-500:]}" if stderr else str(e)
         except Exception as e:
             job["status"] = "error"
             job["error"] = str(e)

@@ -134,12 +134,33 @@ input[type="checkbox"] { accent-color: #6c8cff; }
 .progress-bar {
   height: 100%;
   width: 0%;
-  background: #6c8cff;
-  transition: width 0.3s ease;
+  background: linear-gradient(90deg, #6c8cff 0%, #8ba4ff 50%, #6c8cff 100%);
+  background-size: 200% 100%;
+  transition: width 0.5s ease;
   border-radius: 4px;
+  animation: shimmer 1.5s infinite linear;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
-.stage-label { color: #888; font-size: 0.9rem; }
+.stage-label {
+  color: #aaa;
+  font-size: 0.9rem;
+  min-height: 1.5em;
+}
+.progress-pct {
+  color: #6c8cff;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0.25rem;
+}
+.progress-elapsed {
+  color: #666;
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
 
 /* Result */
 .result-info {
